@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Haunted Mirror</title>
+    
+    <!-- p5.js draws the sketch; p5.sound adds the microphone and tones. -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/addons/p5.sound.min.js"></script>
+    
+    <style>
+      body {
+        margin: 0;
+        padding: 28px 16px;
+        background: #100c1c;
+        color: #eee5ff;
+        font-family: Arial, sans-serif;
+        text-align: center;
+      }
+      h1 {
+        margin: 0;
+        color: #dbbcff;
+        font-size: 36px;
+      }
+      p {
+        line-height: 1.6;
+      }
+      button {
+        margin: 4px;
+        padding: 11px 18px;
+        border: 1px solid #ac87df;
+        border-radius: 8px;
+        background: #33224e;
+        color: white;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #503474;
+      }
+      #sketch { 
+        margin: 18px auto; 
+        max-width: 800px; 
+      }
+      canvas { 
+        display: block; 
+        max-width: 100%; 
+        height: auto !important; 
+      }
+      .note {
+        font-size: 14px;
+        color: #bfd1d2;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Haunted Mirror</h1>
+    <p>A little noise wakes the ghosts.</p>
+    <button onclick="startCamera()">Enable webcam</button>
+    <button onclick="startMicrophone()">Enable microphone</button>
+    <div id="sketch"></div>
+    <p>Move the mouse: guide a ghost &nbsp;|&nbsp; Click the canvas: play a spooky tone<br>
+    C: change mirror color &nbsp;|&nbsp; Space: Pause ghost motion &nbsp;|&nbsp;
+    M: mute tones &nbsp;|&nbsp; R: reset animations</p>
+    <p class="note">
+      Allow webcam and microphone access when prompted. Use an HTTPS page or localhost.<br>
+      The sketch uses live video and sound levels without recording or uploading them.
+    </p>
+    
+    <script>
+      /*
+      Art 151 - HAUNTED MIRROR
+      Student name: Nihal Chahal
+      
+      AI assistance: Google Gemini helped me generate some portion of the coding draft, and helped prepare some of the setup 
+      Debugging assistance: ChatGPT helped identify and correct the library URL, spelling, and capitalization errors.
+      Student: I did the HTML/CSS coding, and also did JS coding myself. This concept was mostly my idea to make the ghosts react to people voices and to see a mirror version of you from the webcam.
+      
+      OUTSIDE SOURCES - official p5.js documentation, consulted on October 21, 2026;
+      push()/pop(): https://p5js.org/reference/p5/push/ / https://p5js.org/reference/p5/pop/
+      translate: https://p5js.org/reference/p5/translate/
+      createCapture(): https://p5js.org/reference/p5/createCapture/
+      tint(): https://p5js.org/reference/p5/tint/
+      AudioIn: https://v1.p5js.org/reference/p5.sound/p5.AudioIn/
+      getLevel(): https://v1.p5js.org/reference/p5.AudioIn/getLevel/
+      Oscillator: https://v1.p5js.org/reference/p5.sound/p5.Oscillator/
+      amp(): https://v1.p5js.org/reference/p5.Oscillator/amp/
+      userStartAudio(): https://v1.p5js.org/reference/p5/userStartAudio/
+      mousePressed(): https://p5js.org/reference/p5/mousePressed/
+      keyPressed(): https://p5js.org/reference/p5/keyPressed/
+      map(): https://p5js.org/reference/p5/map/
+      
+      The live webcam supplies the video. Ghosts are drawn from basic shapes.
+      The click sound is synthesized by p5.sound; no downloaded media is used
+      */
+      
+      // Variables remember the inputs, animation, and interaction settings.
+      let camera;
+      let mic;
+      let tone;
+      let cameraOn = false;
+      let cameraRequested = false;
+      let micOn = false;
+      let micRequested = false;
+      let toneStarted = false;
+      let soundOn = true;
+      let moving = true;
+      let angle = 0;
+      let mirrorMode = 0;
+      let ringSize = 0;
+      let ringX = 400;
+      let ringY = 250;
+      let cameraMessage = "Enable the webcam to reveal your haunted reflection.";
+      let micMessage = "Microphone off - enable it above, then speak or clap.";
+      
+      function setup() {
+        // setup() runs once. parent() puts the canvas inside the HTML div.
+        let canvas = createCanvas(800, 500);
+        canvas.parent("sketch");
+        angleMode(DEGREES);
+        textFont("Arial");
+        textAlign(CENTER, CENTER);
+        
+        // These objects are created now; input access starts only after a button clicks.
+        mic = new p5.AudioIn();
+        tone = new p5.Oscillator("sine");
+        tone.amp(0);
+        describe("A tinted webcam mirror with sound-reactive ghosts and a mouse-following ghost.");
+      }
+      
+      function draw() {
+        background(16, 12, 28);
+        
+        // A loop repeats small decorative stars without an array.
+        noStroke();
+        fill(165, 142, 202);
+        for (let x = 40; x < width; x = x + 70) {
+          circle(x, 34 + sin(x) * 8, 3);
+          circle(x, 468 + sin(x) * 8, 3);
+        }
+        
+        // Space pauses the angle changes. Mouse, microphone, and video stay interactive.
+        if (moving) {
+          angle = angle + 1;
+        }
+        
+        // getLevel() will measure the volume, not the meaning of speech.
+        let volume = 0;
+        if (micOn) {
+          volume = mic.getLevel();
+        }
+        // map(value, oldMin, oldMax, newMin, newMax, true) keeps the result in bounds.
+        let ghostSize = map(volume, 0, 0.15, 70, 140, true);
+        
+        // Mirror frame: changing its stroke will not affect later drawings.
+        push();
+        fill(24, 18, 39);
+        stroke(161, 113, 221);
+        strokeWeight(4);
+        rect(226, 72, 348, 268, 22);
+        pop();
+        
+        if (cameraOn) {
+          // Group 1: saving the state, move/mirror/tint the video, and restore it back.
+          push();
+          translate(560, 86);
+          scale(-1, 1);
+          if (mirrorMode === 0) {
+            tint(160, 255, 195); // Green ghost vision.
+          } else if (mirrorMode === 1) {
+            tint(210, 155, 255); // Purple ghost vision.
+          } else {
+            tint(255, 185, 120); // Orange ghost vision.
+          }
+          image(camera, 0, 0, 320, 240);
+          pop(); // Restore the normal direction and remove this group's tint.
+        } else {
+          fill(224, 210, 243);
+          textSize(18);
+          text(cameraMessage, 260, 142, 280, 128);
+        }
+        
+        // Each call gets its own push()/pop() pair inside the drawGhost() command.
+        drawGhost(112, 210 + sin(angle) * 15, ghostSize, sin(angle) * 14, "#d4ffe8");
+        drawGhost(688, 210 - sin(angle) * 15, ghostSize, -sin(angle) * 14, "#ead9ff");
+        
+        // A click creates a growing ring at the click position.
+        if (ringSize > 0) {
+          push();
+          noFill();
+          stroke(255, 189, 123, map(ringSize, 10, 180, 230, 0));
+          strokeWeight(3);
+          circle(ringX, ringY, ringSize);
+          pop();
+          ringSize = ringSize + 5;
+          if (ringSize > 180) {
+            ringSize = 0;
+          }
+        }
+        
+        // GROUP 2: a third ghost follows the mouse independently of the others.
+        if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
+          drawGhost(mouseX, mouseY, 38, sin(angle) * 12, "#ffd6ad");
+        }
+        
+        // These labels stay upright because the earlier groups restored their state.
+        noStroke();
+        fill(238, 225, 255);
+        textSize(16);
+        text("SPEAK OR CLAP TO GROW THE GHOSTS", 400, 368);
+        fill(49, 36, 69);
+        rect(275, 390, 250, 12, 6);
+        fill(183, 246, 208);
+        rect(275, 390, map(volume, 0, 0.15, 0, 250, true), 12, 6);
+        fill(201, 186, 222);
+        textSize(14);
+        text(micMessage, 400, 428);
+        if (soundOn) {
+          text("Click tones: ON", 400, 451);
+        } else {
+          text("Click tones: OFF", 400, 451);
+        }
+      }
+      
+      // General pattern: push(); transform(); style(); draw shapes; pop();
+      function drawGhost(x, y, size, turn, bodyColor) {
+        push(); // Remember the previous transformations AND drawing styles.
+        translate(x, y); // This ghost's (0, 0) is now at (x, y).
+        rotate(turn); // Rotate only this ghost, using degrees.
+        scale(size / 80); // Resize its whole body, including the eyes.
+        noStroke();
+        fill(bodyColor);
+        ellipse(0, -8, 60, 68);
+        rect(-30, -8, 60, 42);
+        circle(-20, 33, 20);
+        circle(0, 33, 20);
+        circle(20, 33, 20);
+        fill(35, 24, 51);
+        ellipse(-11, -9, 9, 15);
+        ellipse(11, -9, 9, 15);
+        ellipse(0, 13, 10, 13);
+        pop(); // Restore the earlier origin, rotation, scale, fill, and stroke.
+      }
+      
+      function startCamera() {
+        if(!cameraRequested) {
+          cameraRequested = true;
+          cameraMessage = "Waiting for webcam. If blocked or unavailable, allow access and reload.";
+          // VIDEO requests only the webcam, keeping the microphone button separate.
+          camera = createCapture(VIDEO, cameraReady);
+          camera.size(320, 240);
+          camera.hide(); // Hide the extra HTML video; draw it with image() instead.
+        }
+      }
+      
+      // A callback is a function p5 calls later, once the video stream is available.
+      function cameraReady() {
+        cameraOn = true;
+      }
+      
+      function startMicrophone() {
+        if (!micRequested) {
+          userStartAudio();
+          micRequested = true;
+          micMessage = "Waiting for microphone permission...";
+          mic.start(microphoneReady, microphoneError);
+        }
+      }
+      
+      function microphoneReady() {
+        micOn = true;
+        micMessage = "Microphone on - try speaking softly, then clapping.";
+      }
+      
+      function microphoneError() {
+        micRequested = false; // Allow another attempt with the button.
+        micOn = false;
+        micMessage = "Microphone unavailable. Allow access, then try again.";
+      }
+
+      function mousePressed() {
+        // Ignore clicks on the HTML buttons or outside the canvas.
+        if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) {
+          return;
+        }
+        userStartAudio();
+        ringX = mouseX;
+        ringY = mouseY;
+        ringSize = 10;
+
+        if (soundOn) {
+          if (!toneStarted) {
+            tone.start();
+            toneStarted = true;
+          }
+          // Left clicks have a lower pitch; right clicks have a higher pitch.
+          tone.freq(map(mouseX, 0, width, 180, 650));
+          tone.amp(0.08, 0.02); // Fade in to a quiet volume over 0.02 seconds.
+          tone.amp(0, 0.3, 0.03); // Start fading out after a 0.03-second delay.
+        }
+        return false;
+      }
+
+      function keyPressed() {
+        if (key === "c" || key === "C") {
+          mirrorMode = mirrorMode + 1;
+          if (mirrorMode > 2) {
+            mirrorMode = 0;
+          }
+        }
+        if (key === " ") {
+          moving = !moving;
+          return false; // Prevent Space from scrolling the webpage.
+        }
+        if (key === "m" || key === "M") {
+          soundOn = !soundOn;
+          tone.amp(0, 0.05);
+        }
+        if (key === "r" || key === "R") {
+          angle = 0;
+          mirrorMode = 0;
+          moving = true;
+          ringSize = 0;
+          soundOn = true;
+        }
+      }
+    </script>
+  </body>
+</html>
