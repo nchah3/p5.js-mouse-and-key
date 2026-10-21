@@ -53,6 +53,11 @@
         height: auto !important;
       }
 
+      canvas:focus {
+        outline: 2px solid #dbbcff;
+        outline-offset: 4px;
+      }
+
       .note {
         font-size: 14px;
         color: #bfd1d2;
@@ -66,10 +71,12 @@
     <button onclick="startMicrophone()">Enable microphone</button>
     <div id="sketch"></div>
     <p>Move the mouse: guide a ghost &nbsp;|&nbsp; Click the canvas: play a spooky tone<br>
-      C: change mirror color &nbsp;|&nbsp; Space: Pause ghost motion &nbsp;|&nbsp;
-      M: mute tones &nbsp;|&nbsp; R: reset animations</p>
+      C: change mirror color &nbsp;|&nbsp; Space: pause/resume animation &nbsp;|&nbsp;
+      M: mute click tones &nbsp;|&nbsp; R: reset animation</p>
     <p class="note">
-      Allow webcam and microphone access when prompted. Use an HTTPS page or localhost.<br>
+      Allow webcam and microphone access when prompted. Click the canvas before using the keys.<br>
+      The bottom line shows whether the animation is paused and which key was received.<br>
+      Use an HTTPS page or localhost.<br>
       The sketch uses live video and sound levels without recording or uploading them.
     </p>
 
@@ -82,7 +89,8 @@
       Student name: Nihal Chahal
       
       AI assistance: Google Gemini helped me generate some portion of the coding draft, and helped prepare some of the setup 
-      Debugging assistance: ChatGPT helped identify and correct the library URL, spelling, and capitalization errors.
+      Debugging assistance: ChatGPT helped correct the library URL and typing errors,
+      then helped with canvas keyboard focus, pause/reset behavior, and microphone smoothing.
       Student: I did the HTML/CSS coding, and also did JS coding myself. This concept was mostly my idea to make the ghosts react to people voices and to see a mirror version of you from the webcam.
       
       OUTSIDE SOURCES - official p5.js documentation, consulted on October 21, 2026;
@@ -98,12 +106,16 @@
       mousePressed(): https://p5js.org/reference/p5/mousePressed/
       keyPressed(): https://p5js.org/reference/p5/keyPressed/
       map(): https://p5js.org/reference/p5/map/
+      keyCode: https://p5js.org/reference/p5/keyCode/
+      attribute(): https://p5js.org/reference/p5.Element/attribute/
+      focus(): https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus
       
       The live webcam supplies the video. Ghosts are drawn from basic shapes.
       The click sound is synthesized by p5.sound; no downloaded media is used
       */
 
       // Variables remember the inputs, animation, and interaction settings.
+      let sketchCanvas; // Keep the canvas so we can give it keyboard focus.
       let camera;
       let mic;
       let tone;
@@ -115,6 +127,10 @@
       let soundOn = true;
       let moving = true;
       let angle = 0;
+      let volume = 0; // Remember the previous reading for smoother movement.
+      let mouseGhostX = 400;
+      let mouseGhostY = 250;
+      let lastKey = "Click the canvas to use the keys.";
       let mirrorMode = 0;
       let ringSize = 0;
       let ringX = 400;
@@ -124,8 +140,11 @@
 
       function setup () {
         // setup() runs once. parent() puts the canvas inside the HTML div.
-        let canvas = createCanvas(800, 500);
-        canvas.parent("sketch");
+        sketchCanvas = createCanvas(800, 500);
+        sketchCanvas.parent("sketch");
+        // tabindex makes the canvas able to receive keyboard focus.
+        sketchCanvas.attribute("tabindex", "0");
+        sketchCanvas.attribute("aria-label", "Haunted Mirror interactive canvas");
         angleMode(DEGREES);
         textFont("Arial");
         textAlign(CENTER, CENTER);
@@ -148,15 +167,26 @@
           circle(x, 468 + sin(x) * 8, 3);
         }
 
-        // Space pauses the angle changes. Mouse, microphone, and video stay interactive.
+        // Update the ghosts only while playing. The live camera stays visible.
         if (moving) {
           angle = angle + 1;
-        }
 
-        // getLevel() will measure the volume, not the meaning of speech.
-        let volume = 0;
-        if (micOn) {
-          volume = mic.getLevel();
+          let targetVolume = 0;
+          if (micOn) {
+            // getLevel(0.8) smooths the microphone reading.
+            targetVolume = mic.getLevel(0.8);
+            // Ignore very quiet background noise. Lower 0.005 for a quiet mic.
+            if (targetVolume < 0.005) {
+              targetVolume = 0;
+            }
+          }
+          // Move 12% toward the new value each frame instead of jumping to it.
+          volume = volume + (targetVolume - volume) * 0.12;
+
+          if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
+            mouseGhostX = mouseX;
+            mouseGhostY = mouseY;
+          }
         }
         // map(value, oldMin, oldMax, newMin, newMax, true) keeps the result in bounds.
         let ghostSize = map(volume, 0, 0.15, 70, 140, true);
@@ -201,16 +231,16 @@
           strokeWeight(3);
           circle(ringX, ringY, ringSize);
           pop();
-          ringSize = ringSize + 5;
+          if (moving) {
+            ringSize = ringSize + 5;
+          }
           if (ringSize > 180) {
             ringSize = 0;
           }
         }
 
-        // GROUP 2: a third ghost follows the mouse independently of the others.
-        if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
-          drawGhost(mouseX, mouseY, 38, sin(angle) * 12, "#ffd6ad");
-        }
+        // GROUP 2: keep the last mouse position so this ghost can pause too.
+        drawGhost(mouseGhostX, mouseGhostY, 38, sin(angle) * 12, "#ffd6ad");
 
         // These labels stay upright because the earlier groups restored their state.
         noStroke();
@@ -228,6 +258,12 @@
           text("Click tones: ON", 400, 451);
         } else {
           text("Click tones: OFF", 400, 451);
+        }
+        textSize(12);
+        if (moving) {
+          text("PLAYING | " + lastKey, 400, 478);
+        } else {
+          text("PAUSED | " + lastKey, 400, 478);
         }
       }
 
@@ -252,6 +288,7 @@
       }
 
       function startCamera () {
+        focusSketch();
         if (!cameraRequested) {
           cameraRequested = true;
           cameraMessage = "Waiting for webcam. If blocked or unavailable, allow access and reload.";
@@ -265,9 +302,11 @@
       // A callback is a function p5 calls later, once the video stream is available.
       function cameraReady () {
         cameraOn = true;
+        focusSketch();
       }
 
       function startMicrophone () {
+        focusSketch();
         if (!micRequested) {
           userStartAudio();
           micRequested = true;
@@ -278,7 +317,9 @@
 
       function microphoneReady () {
         micOn = true;
+        volume = 0;
         micMessage = "Microphone on - try speaking softly, then clapping.";
+        focusSketch();
       }
 
       function microphoneError () {
@@ -287,11 +328,17 @@
         micMessage = "Microphone unavailable. Allow access, then try again.";
       }
 
-      function mousePressed () {
-        // Ignore clicks on the HTML buttons or outside the canvas.
-        if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) {
+      // Browser helper: focus() sends keyboard input to this canvas.
+      function focusSketch () {
+        sketchCanvas.elt.focus();
+      }
+
+      function mousePressed (event) {
+        // event.target tells us which HTML element was actually clicked.
+        if (event.target !== sketchCanvas.elt) {
           return;
         }
+        focusSketch();
         userStartAudio();
         ringX = mouseX;
         ringY = mouseY;
@@ -310,29 +357,44 @@
         return false;
       }
 
-      function keyPressed () {
-        if (key === "c" || key === "C") {
+      function keyPressed (event) {
+        // Leave browser shortcuts such as Ctrl+R available.
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+          return;
+        }
+
+        // Numeric key codes work for lowercase and uppercase letters.
+        if (keyCode === 67) { // C
           mirrorMode = mirrorMode + 1;
           if (mirrorMode > 2) {
             mirrorMode = 0;
           }
+          lastKey = "C: changed mirror color";
+          return false;
         }
-        if (key === " ") {
+        if (keyCode === 32) { // Space
           moving = !moving;
-          return false; // Prevent Space from scrolling the webpage.
+          lastKey = "Space: toggled pause";
+          return false; // Prevent scrolling or activating a focused button.
         }
-        if (key === "m" || key === "M") {
+        if (keyCode === 77) { // M
           soundOn = !soundOn;
           tone.amp(0, 0.05);
+          lastKey = "M: toggled click tones";
+          return false;
         }
-        if (key === "r" || key === "R") {
+        if (keyCode === 82) { // R
           angle = 0;
+          volume = 0;
           mirrorMode = 0;
           moving = true;
           ringSize = 0;
           soundOn = true;
+          tone.amp(0, 0.05);
+          lastKey = "R: reset animation";
+          return false;
         }
       }
     </script>
   </body>
-</html>
+</html> 
